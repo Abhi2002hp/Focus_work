@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Focus Work Dashboard</title>
+<link rel="manifest" href="manifest.json">
+
+<style>
+*{margin:0;padding:0;box-sizing:border-box;font-family:Segoe UI;}
+body{
+  background:radial-gradient(circle at top,#020617,#000);
+  min-height:100vh;display:flex;align-items:center;justify-content:center;color:white;
+}
+.app{
+  width:900px;background:#020617;border-radius:20px;
+  box-shadow:0 0 40px rgba(56,189,248,.3);
+  padding:30px;display:grid;grid-template-columns:1fr 1fr;gap:30px;
+}
+.timerCircle{
+  width:260px;height:260px;border-radius:50%;
+  border:6px solid #38bdf8;display:flex;align-items:center;justify-content:center;
+  margin:20px auto;box-shadow:0 0 25px rgba(56,189,248,.6);
+}
+.timer{font-size:58px;}
+.status{text-align:center;margin-top:10px;color:#facc15;}
+button,input{width:100%;padding:12px;border:none;border-radius:10px;margin:6px 0;}
+button{background:linear-gradient(135deg,#38bdf8,#22c55e);cursor:pointer;}
+.stats{margin-top:15px;line-height:1.8;}
+.progress{height:10px;background:#111827;border-radius:10px;overflow:hidden;}
+.progress-bar{height:100%;width:0%;background:linear-gradient(90deg,#38bdf8,#22c55e);}
+</style>
+</head>
+
+<body>
+
+<div class="app">
+<div>
+<h1>🎯 Focus Work</h1>
+<div class="timerCircle"><div class="timer" id="timer">00:00</div></div>
+<div class="progress"><div class="progress-bar" id="progressBar"></div></div>
+<div class="status" id="status">Waiting...</div>
+</div>
+
+<div>
+<h2>Session Setup</h2>
+<input type="number" id="hours" placeholder="Working Hours (eg: 8)">
+
+<button id="startBtn" onclick="startTimer()">Start Session</button>
+<button onclick="pauseTimer()">Pause</button>
+<button onclick="restartTimer()">Restart</button>
+<button onclick="startLunch()">🍽 Start Lunch</button>
+<button onclick="startSnack()">☕ Start Snack</button>
+<button onclick="endBreak()">⏹ End Break</button>
+
+<div class="stats">
+<p>🔁 Cycles: <span id="cycle">0</span></p>
+<p>🧠 Focus (hrs): <span id="focusHrs">0</span></p>
+<p>🌴 Leisure (hrs): <span id="leisureHrs">0</span></p>
+<p>🍽 Lunch (hrs): <span id="lunchHrs">0</span></p>
+<p>☕ Snack (hrs): <span id="snackHrs">0</span></p>
+<p>🚫 Unproductive (hrs): <span id="unproductiveHrs">0</span></p>
+</div>
+</div>
+</div>
+
+<script>
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("sw.js");
+}
+
+if ("Notification" in window) {
+  Notification.requestPermission();
+}
+
+function notify(msg){
+  if(Notification.permission==="granted"){
+    new Notification("Focus Work",{body:msg});
+  }
+}
+
+class FocusTimer {
+  constructor() {
+    this.interval=null;
+    this.running=false;
+    this.paused=false;
+    this.mode="focus";
+    this.timeLeft=0;
+    this.currentDuration=0;
+    this.totalSeconds=0;
+    this.cycle=0;
+    this.focusSec=0;this.leisureSec=0;this.lunchSec=0;this.snackSec=0;
+
+    this.timerEl=document.getElementById("timer");
+    this.statusEl=document.getElementById("status");
+    this.progressEl=document.getElementById("progressBar");
+    this.cycleEl=document.getElementById("cycle");
+    this.focusEl=document.getElementById("focusHrs");
+    this.leisureEl=document.getElementById("leisureHrs");
+    this.lunchEl=document.getElementById("lunchHrs");
+    this.snackEl=document.getElementById("snackHrs");
+    this.unprodEl=document.getElementById("unproductiveHrs");
+    this.startBtn=document.getElementById("startBtn");
+
+    this.beep=new Audio("https://actions.google.com/sounds/v1/alarms/alarm_clock.ogg");
+  }
+
+  start(hours){
+    if(this.running) return;
+    if(!hours) return alert("Enter working hours");
+    this.running=true;
+    this.startBtn.disabled=true;
+    this.totalSeconds=hours*3600;
+    this.startFocus();
+  }
+
+  startFocus(){ this.switchMode("focus",600,"🧠 Focus Time"); }
+  startBreak(){ this.switchMode("leisure",120,"🌴 Leisure Break"); }
+  startLunch(){ if(this.running) this.switchMode("lunch",1800,"🍽 Lunch Break"); }
+  startSnack(){ if(this.running) this.switchMode("snack",600,"☕ Snack Break"); }
+  endBreak(){ if(this.running) this.startFocus(); }
+
+  switchMode(mode,time,label){
+    clearInterval(this.interval);
+    this.mode=mode;
+    this.currentDuration=time;
+    this.timeLeft=time;
+    this.statusEl.innerText=label;
+    this.beep.play(); notify(label);
+    this.run();
+  }
+
+  run(){
+    let last=Date.now();
+    this.interval=setInterval(()=>{
+      let now=Date.now();
+      let diff=Math.floor((now-last)/1000);
+      if(diff<=0) return;
+      last=now;
+
+      if(!this.paused){
+        this.timeLeft-=diff;
+        this.totalSeconds-=diff;
+        if(this.mode==="focus") this.focusSec+=diff;
+        if(this.mode==="leisure") this.leisureSec+=diff;
+        if(this.mode==="lunch") this.lunchSec+=diff;
+        if(this.mode==="snack") this.snackSec+=diff;
+      }
+
+      this.updateTimer();
+      this.updateStats();
+
+      if(this.timeLeft<=0){
+        this.beep.play();
+        if(this.mode==="focus"){ this.cycle++; this.startBreak(); }
+        else this.startFocus();
+      }
+
+      if(this.totalSeconds<=0) this.finish();
+    },1000);
+  }
+
+  pause(){ this.paused=!this.paused; }
+
+  finish(){
+    clearInterval(this.interval);
+    this.running=false;
+    this.startBtn.disabled=false;
+    this.statusEl.innerText="🎉 Completed";
+  }
+
+  updateTimer(){
+    let m=Math.floor(this.timeLeft/60);
+    let s=this.timeLeft%60;
+    this.timerEl.innerText=`${m}:${s<10?"0":""}${s}`;
+    let pct=((this.currentDuration-this.timeLeft)/this.currentDuration)*100;
+    this.progressEl.style.width=pct+"%";
+  }
+
+  updateStats(){
+    this.cycleEl.innerText=this.cycle;
+    this.focusEl.innerText=(this.focusSec/3600).toFixed(2);
+    this.leisureEl.innerText=(this.leisureSec/3600).toFixed(2);
+    this.lunchEl.innerText=(this.lunchSec/3600).toFixed(2);
+    this.snackEl.innerText=(this.snackSec/3600).toFixed(2);
+    let un=this.leisureSec+this.lunchSec+this.snackSec;
+    this.unprodEl.innerText=(un/3600).toFixed(2);
+  }
+}
+
+const app=new FocusTimer();
+function startTimer(){app.start(document.getElementById("hours").value);}
+function pauseTimer(){app.pause();}
+function restartTimer(){location.reload();}
+function startLunch(){app.startLunch();}
+function startSnack(){app.startSnack();}
+function endBreak(){app.endBreak();}
+</script>
+
+</body>
+</html>
